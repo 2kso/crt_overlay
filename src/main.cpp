@@ -55,19 +55,22 @@ const char *fragmentShaderSource = R"(
         float scanline = fine_lines + roll_bands + 0.08;
 
         // Pixelization grid
-        // Simulating the physical black gaps between CRT pixels
         vec2 pixel_size = vec2(3.0, 3.0); 
         vec2 grid = mod(gl_FragCoord.xy, pixel_size);
+        
         float grid_alpha = 0.0;
+        // Darken the gaps between "pixels"
         if (grid.x < 1.0 || grid.y < 1.0) {
-            grid_alpha = 0.4; // Darkness of the pixel gaps
+            grid_alpha = 0.35; // The black grid
         }
 
-        // Alpha controls how much the desktop is darkened
+        // Apply scanlines and edge vignette to darken the overall screen
         float edgeDarkening = (1.0 - vignette) * 0.8; 
+        
+        // Final darkness. We clamp it so it never goes fully opaque unless on the extreme edges.
         float final_alpha = scanline + grid_alpha + edgeDarkening;
         
-        // We output pure black, using alpha to blend over the desktop
+        // Output pure black, using alpha to darken/draw the CRT artifacts over the desktop
         FragColor = vec4(0.0, 0.0, 0.0, clamp(final_alpha, 0.0, 1.0));
     }
 )";
@@ -202,9 +205,7 @@ int main() {
     glClear(GL_COLOR_BUFFER_BIT);
 
     glEnable(GL_BLEND);
-    // Important: Use ONE instead of SRC_ALPHA to prevent the background desktop
-    // from being rendered dark by the overlay's black pixels.
-    // We want premultiplied alpha-like blending for the shader lines.
+    // Standard alpha blending to composite over the desktop correctly
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     glUseProgram(shaderProgram);
