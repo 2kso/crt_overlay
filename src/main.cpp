@@ -27,12 +27,17 @@ const char *fragmentShaderSource = R"(
     out vec4 FragColor;
     in vec2 TexCoords;
     uniform vec2 resolution;
-    uniform float time; // We'll pass time to make the effect dynamic
+    uniform float time; // Passing time for dynamic effects
     
+    // Pseudo-random noise function
+    float rand(vec2 co) {
+        return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+    }
+
     void main() {
         vec2 uv = gl_FragCoord.xy / resolution.xy;
         
-        // CRT curvature
+        // --- 1. CRT Curvature ---
         vec2 p = uv * 2.0 - 1.0;
         p *= vec2(1.0 + (p.y * p.y) * 0.04, 1.0 + (p.x * p.x) * 0.05);
 
@@ -44,33 +49,51 @@ const char *fragmentShaderSource = R"(
 
         vec2 curved_uv = p * 0.5 + 0.5;
 
-        // Vignette (darkened edges)
+        // --- 2. Vignette ---
         float dist = length(p);
-        float vignette = smoothstep(1.3, 0.6, dist); 
+        float vignette = smoothstep(1.5, 0.5, dist); 
 
-        // Rolling scanlines (increased intensity)
-        // A combination of static fine lines and slowly rolling wide bands
+        // --- 3. Scanlines ---
         float fine_lines = sin(curved_uv.y * resolution.y * 2.5) * 0.08;
         float roll_bands = sin(curved_uv.y * 15.0 - time * 6.0) * 0.08;
         float scanline = fine_lines + roll_bands + 0.08;
 
-        // Pixelization grid
+        // --- 4. Pixelization Grid (Subpixel mask gap) ---
         vec2 pixel_size = vec2(3.0, 3.0); 
         vec2 grid = mod(gl_FragCoord.xy, pixel_size);
-        
         float grid_alpha = 0.0;
-        // Darken the gaps between "pixels"
         if (grid.x < 1.0 || grid.y < 1.0) {
-            grid_alpha = 0.35; // The black grid
+            grid_alpha = 0.35; 
         }
 
-        // Apply scanlines and edge vignette to darken the overall screen
+        // --- 5. Glitches & Artifacts ---
+
+        // A. Static Noise (TV Snow)
+        // Add random high-frequency dark speckles
+        float noise = rand(gl_FragCoord.xy * time) * 0.15;
+
+        // B. Luminance Flickering
+        // Occasional rapid flashes of brightness/darkness over the whole screen
+        float flicker = sin(time * 30.0) * sin(time * 45.0) * 0.03;
+
+        // C. VHS Tracking Line (Glitch Band)
+        // A thick band of distorted noise that rolls down the screen occasionally
+        // `track_pos` loops from 1.5 to -0.5, ensuring it sweeps across the screen and then disappears for a bit.
+        float track_pos = mod(time * 0.2, 2.0) - 0.5; 
+        float distance_to_track = abs(curved_uv.y - track_pos);
+        
+        // When the Y coordinate is near the tracking band, increase the noise heavily
+        float tracking_distort = 0.0;
+        if (distance_to_track < 0.05) {
+            // Intense noise inside the tracking band
+            tracking_distort = rand(vec2(gl_FragCoord.y, time)) * 0.4;
+        }
+
+        // --- 6. Compositing ---
         float edgeDarkening = (1.0 - vignette) * 0.8; 
+        float final_alpha = scanline + grid_alpha + edgeDarkening + noise + flicker + tracking_distort;
         
-        // Final darkness. We clamp it so it never goes fully opaque unless on the extreme edges.
-        float final_alpha = scanline + grid_alpha + edgeDarkening;
-        
-        // Output pure black, using alpha to darken/draw the CRT artifacts over the desktop
+        // Output pure black, using alpha to draw the dark artifacts on the screen
         FragColor = vec4(0.0, 0.0, 0.0, clamp(final_alpha, 0.0, 1.0));
     }
 )";
