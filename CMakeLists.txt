@@ -10,7 +10,11 @@ find_package(X11 REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XFIXES REQUIRED xfixes)
 
-add_executable(crt_overlay src/main.cpp)
+add_executable(crt_overlay 
+    src/main.cpp
+    src/shader/Shader.cpp
+    src/window/OverlayWindow.cpp
+)
 
 target_include_directories(crt_overlay PRIVATE
     ${SDL2_INCLUDE_DIRS}
