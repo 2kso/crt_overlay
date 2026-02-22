@@ -6,6 +6,7 @@
 #include <X11/extensions/Xfixes.h>
 #include <X11/extensions/Xrender.h>
 #include <X11/extensions/shape.h>
+#include <chrono>
 #include <iostream>
 #include <string.h>
 #include <unistd.h>
@@ -26,33 +27,48 @@ const char *fragmentShaderSource = R"(
     out vec4 FragColor;
     in vec2 TexCoords;
     uniform vec2 resolution;
+    uniform float time; // We'll pass time to make the effect dynamic
     
     void main() {
         vec2 uv = gl_FragCoord.xy / resolution.xy;
         
         // CRT curvature
         vec2 p = uv * 2.0 - 1.0;
-        p *= vec2(1.0 + (p.y * p.y) * 0.05, 1.0 + (p.x * p.x) * 0.05);
-        
-        // Vignette
-        float dist = length(p);
-        float vignette = smoothstep(1.3, 0.8, dist); // dark edges
+        p *= vec2(1.0 + (p.y * p.y) * 0.04, 1.0 + (p.x * p.x) * 0.05);
 
-        // If outside the curved coords, it's pure black
+        // Outside curved area is pure black
         if (abs(p.x) > 1.0 || abs(p.y) > 1.0) {
             FragColor = vec4(0.0, 0.0, 0.0, 1.0);
             return;
         }
-        
-        // Scanlines based on curved uv coordinates
+
         vec2 curved_uv = p * 0.5 + 0.5;
-        // Frequency of scanlines
-        float scanline = sin(curved_uv.y * resolution.y * 1.5) * 0.04 + 0.04;
+
+        // Vignette (darkened edges)
+        float dist = length(p);
+        float vignette = smoothstep(1.3, 0.6, dist); 
+
+        // Rolling scanlines (increased intensity)
+        // A combination of static fine lines and slowly rolling wide bands
+        float fine_lines = sin(curved_uv.y * resolution.y * 2.5) * 0.08;
+        float roll_bands = sin(curved_uv.y * 15.0 - time * 6.0) * 0.08;
+        float scanline = fine_lines + roll_bands + 0.08;
+
+        // Pixelization grid
+        // Simulating the physical black gaps between CRT pixels
+        vec2 pixel_size = vec2(3.0, 3.0); 
+        vec2 grid = mod(gl_FragCoord.xy, pixel_size);
+        float grid_alpha = 0.0;
+        if (grid.x < 1.0 || grid.y < 1.0) {
+            grid_alpha = 0.4; // Darkness of the pixel gaps
+        }
+
+        // Alpha controls how much the desktop is darkened
+        float edgeDarkening = (1.0 - vignette) * 0.8; 
+        float final_alpha = scanline + grid_alpha + edgeDarkening;
         
-        float edgeDarkening = (1.0 - vignette) * 0.6;
-        float alpha = scanline + edgeDarkening;
-        
-        FragColor = vec4(0.0, 0.0, 0.0, clamp(alpha, 0.0, 1.0));
+        // We output pure black, using alpha to blend over the desktop
+        FragColor = vec4(0.0, 0.0, 0.0, clamp(final_alpha, 0.0, 1.0));
     }
 )";
 
@@ -166,10 +182,14 @@ int main() {
 
   glUseProgram(shaderProgram);
   GLint resLoc = glGetUniformLocation(shaderProgram, "resolution");
+  GLint timeLoc = glGetUniformLocation(shaderProgram, "time");
   glUniform2f(resLoc, (float)width, (float)height);
 
   bool running = true;
   XEvent xev;
+
+  // Need higher precision timer for the "time" uniform
+  auto startTime = std::chrono::high_resolution_clock::now();
 
   while (running) {
     while (XPending(display)) {
@@ -188,6 +208,12 @@ int main() {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     glUseProgram(shaderProgram);
+
+    auto currentTime = std::chrono::high_resolution_clock::now();
+    float timeSecs =
+        std::chrono::duration<float>(currentTime - startTime).count();
+    glUniform1f(timeLoc, timeSecs);
+
     glBindVertexArray(VAO);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
